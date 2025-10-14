@@ -1,0 +1,3 @@
+[submodule "extern/ActiveBreach-Engine"]
+	path = extern/ActiveBreach-Engine
+	url = https://github.com/dutchpsycho/ActiveBreach-Engine

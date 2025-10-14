@@ -1,0 +1,16 @@
+*.exe
+*.dll
+*.obj
+*.lib
+*.pdb
+*.ilk
+x64/
+Debug/
+Release/
+bin/
+build/
+out/
+lacerate/
+.vs/
+*.vcxproj.user
+*.vcxproj.filters

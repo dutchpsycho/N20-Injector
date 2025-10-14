@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="lacerate.vcxproj" Id="6ffcd0bd-fccf-41ef-b72e-ab0f07847df1" />
+</Solution>
