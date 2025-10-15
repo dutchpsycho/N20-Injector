@@ -133,11 +133,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="extern\ABE\C++\Include\ActiveBreach.cpp" />
+    <ClCompile Include="extern\ActiveBreach-Engine\C++\Include\ActiveBreach.cpp" />
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="extern\ABE\C++\Include\ActiveBreach.hpp" />
+    <ClInclude Include="extern\ActiveBreach-Engine\C++\Include\ActiveBreach.hpp" />
+    <ClInclude Include="src\config.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
