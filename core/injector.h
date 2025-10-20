@@ -13,3 +13,4 @@
 #include <optional>
 
 bool N2Inject(DWORD pid, const char* targetDll, const char* targetApi, const char* dllPath);
+bool N2ValidateRemoteExecution(HANDLE hProc, uintptr_t stackAddr, uintptr_t trampAddr, size_t trampSize);
