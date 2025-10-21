@@ -5,6 +5,7 @@
     <Platform Name="x86" />
   </Configurations>
   <Project Path="N20.vcxproj" Id="6ffcd0bd-fccf-41ef-b72e-ab0f07847df1">
-    <BuildType Project="Release" />
+    <BuildType Solution="*|x64" Project="Debug" />
+    <BuildType Solution="*|x86" Project="Release" />
   </Project>
 </Solution>
